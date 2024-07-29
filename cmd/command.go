@@ -8,6 +8,7 @@ import (
 	"github.com/urfave/cli"
 )
 
+// 程序入口
 func Run(version, commitHash string) {
 	app := cli.App{
 		Name:    "screego",

@@ -31,7 +31,7 @@ const (
 	AuthModeNone = "none"
 )
 
-// Config represents the application configuration.
+// Config represents the application configuration. 用于从 config 文件中解析配置
 type Config struct {
 	LogLevel LogLevel `default:"info" split_words:"true"`
 
@@ -66,21 +66,27 @@ type Config struct {
 	CloseRoomWhenOwnerLeaves bool `default:"true" split_words:"true"`
 }
 
+// 解析端口范围函数
 func (c Config) parsePortRange() (uint16, uint16, error) {
+	// 检查是否为空
 	if c.TurnPortRange == "" {
 		return 0, 0, nil
 	}
 
+	// 分割端口范围字符串
 	parts := strings.Split(c.TurnPortRange, ":")
 	if len(parts) != 2 {
 		return 0, 0, errors.New("must include one colon")
 	}
+	// 解析最小端口号
 	stringMin := parts[0]
 	stringMax := parts[1]
+	// 将字符串解析为 uint
 	min64, err := strconv.ParseUint(stringMin, 10, 16)
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid min: %s", err)
 	}
+	// 解析最大端口号
 	max64, err := strconv.ParseUint(stringMax, 10, 16)
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid max: %s", err)
@@ -89,33 +95,50 @@ func (c Config) parsePortRange() (uint16, uint16, error) {
 	return uint16(min64), uint16(max64), nil
 }
 
+// 解析 TURN 服务器的端口范围
 func (c Config) PortRange() (uint16, uint16, bool) {
+	// 解析端口
 	min, max, _ := c.parsePortRange()
+	// 返回结果，最小端口号，最大端口号，和是否成功解析
 	return min, max, min != 0 && max != 0
 }
 
-// Get loads the application config.
+// Get loads the application config. 加载应用程序的配置
+//
+// @return Config: 应用的配置
+// @return []FutureLog: 包含日志信息的切片,用于记录配置加载过程中的各种信息和错误
 func Get() (Config, []FutureLog) {
+	// 存储日志信息
 	var logs []FutureLog
+	// 获取工作目录
 	dir, log := getExecutableOrWorkDir()
 	if log != nil {
 		logs = append(logs, *log)
 	}
 
+	// 加载配置文件
+	// 获取文件路径
 	for _, file := range getFiles(dir) {
+		// 检查文件是否存在
 		_, fileErr := osStat(file)
+		// 如果文件存在
 		if fileErr == nil {
+			// 尝试加载文件
 			if err := godotenv.Load(file); err != nil {
+				// 文件加载成功，记录调试级别日志
 				logs = append(logs, futureFatal(fmt.Sprintf("cannot load file %s: %s", file, err)))
 			} else {
+				// 文件加载失败，记录致命级别日志
 				logs = append(logs, FutureLog{
 					Level: zerolog.DebugLevel,
 					Msg:   fmt.Sprintf("Loading file %s", file),
 				})
 			}
 		} else if os.IsNotExist(fileErr) {
+			// 文件不存在 跳过
 			continue
 		} else {
+			// 文件加载失败，记录 warning 级别日志
 			logs = append(logs, FutureLog{
 				Level: zerolog.WarnLevel,
 				Msg:   fmt.Sprintf("cannot read file %s because %s", file, fileErr),
@@ -123,18 +146,22 @@ func Get() (Config, []FutureLog) {
 		}
 	}
 
+	// 解析环境变量
 	config := Config{}
+	// 使用 envconfig 包解析环境变量，并将其赋值给 config 结构体
 	err := envconfig.Process(prefix, &config)
 	if err != nil {
 		logs = append(logs,
 			futureFatal(fmt.Sprintf("cannot parse env params: %s", err)))
 	}
 
+	// 验证认证模式
 	if config.AuthMode != AuthModeTurn && config.AuthMode != AuthModeAll && config.AuthMode != AuthModeNone {
 		logs = append(logs,
 			futureFatal(fmt.Sprintf("invalid SCREEGO_AUTH_MODE: %s", config.AuthMode)))
 	}
 
+	// 验证 TLS 配置
 	if config.ServerTLS {
 		if config.TLSCertFile == "" {
 			logs = append(logs, futureFatal("SCREEGO_TLS_CERT_FILE must be set if TLS is enabled"))
@@ -145,6 +172,7 @@ func Get() (Config, []FutureLog) {
 		}
 	}
 
+	// 编译 CORS 允许的来源
 	var compiledAllowedOrigins []*regexp.Regexp
 	for _, origin := range config.CorsAllowedOrigins {
 		compiled, err := regexp.Compile(origin)
@@ -154,6 +182,7 @@ func Get() (Config, []FutureLog) {
 		compiledAllowedOrigins = append(compiledAllowedOrigins, compiled)
 	}
 
+	// 设置 CheckOrigin 函数，用于检查请求的来源是否在允许的范围内
 	config.CheckOrigin = func(origin string) bool {
 		if origin == "" {
 			return true
@@ -166,6 +195,7 @@ func Get() (Config, []FutureLog) {
 		return false
 	}
 
+	// 生成随机密钥
 	if len(config.Secret) == 0 {
 		config.Secret = make([]byte, 32)
 		if _, err := rand.Read(config.Secret); err == nil {
